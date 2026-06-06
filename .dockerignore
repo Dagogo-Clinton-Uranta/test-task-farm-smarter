@@ -1,0 +1,52 @@
+# Dependencies
+node_modules
+
+# Build output
+dist
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Git
+.git
+.gitignore
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+*~
+
+# Testing
+coverage
+*.test.ts
+*.spec.ts
+__tests__
+
+# Documentation
+*.md
+!README.md
+Documentations
+
+# Logs
+logs/
+npm-debug*.log
+yarn-debug*.log
+yarn-error*.log
+lerna-debug*.log
+pnpm-debug*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# CI/CD
+.github
+
+# Other
+.eslintrc.json
+.prettierrc
+jest.config.js
