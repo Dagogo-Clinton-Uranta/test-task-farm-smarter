@@ -1,0 +1,40 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  // Add your local PostgreSQL/PostGIS credentials to .env:
+  // DATABASE_URL="postgresql://YOUR_USER:YOUR_PASSWORD@localhost:5432/YOUR_DATABASE?schema=public"
+  url      = env("DATABASE_URL")
+}
+
+model Farm {
+  id        String                          @id(map: "farms_pkey") @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name      String                          @db.VarChar(255)
+  ownerId   String                          @map("owner_id") @db.VarChar(255)
+  geometry  Unsupported("geometry(Polygon, 4326)")
+  createdAt DateTime                        @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime                        @updatedAt @map("updated_at") @db.Timestamptz(6)
+  readings  FarmReading[]
+
+  @@index([ownerId], map: "farms_owner_id_idx")
+  @@map("farms")
+}
+
+model FarmReading {
+  id         String   @id(map: "farm_readings_pkey") @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  farmId     String   @map("farm_id") @db.Uuid
+  sensorId   String   @map("sensor_id") @db.VarChar(255)
+  recordedAt DateTime @map("recorded_at") @db.Timestamptz(6)
+  metric     String   @db.VarChar(50)
+  value      Decimal  @db.Decimal(10, 4)
+  unit       String   @db.VarChar(30)
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  farm       Farm     @relation(fields: [farmId], references: [id], onDelete: Cascade, map: "farm_readings_farm_id_fkey")
+
+  @@index([farmId], map: "farm_readings_farm_id_idx")
+  @@index([sensorId], map: "farm_readings_sensor_id_idx")
+  @@index([recordedAt], map: "farm_readings_recorded_at_idx")
+  @@map("farm_readings")
+}

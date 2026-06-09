@@ -46,8 +46,11 @@ export class ConflictError extends AppError {
 }
 
 export class ValidationError extends AppError {
-  constructor(message: string = 'Validation Error') {
+  details?: unknown;
+
+  constructor(message: string = 'Validation Error', details?: unknown) {
     super(message, 422);
+    this.details = details;
   }
 }
 

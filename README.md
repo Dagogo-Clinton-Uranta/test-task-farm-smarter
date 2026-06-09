@@ -1,306 +1,221 @@
-# UFarmX Unified Backend API
+# Farm Boundary API
 
-Modern TypeScript-based unified backend API for the UFarmX agricultural technology platform.
+TypeScript + Express API for storing farm boundary polygons and farm sensor readings in PostgreSQL/PostGIS. Prisma is used for database access, with raw SQL for PostGIS geometry operations because Prisma does not natively model PostGIS geometry columns.
 
-## 🚀 Quick Start
+## Quick Start
 
 ### Prerequisites
 
 - Node.js >= 20.0.0
-- MongoDB (local or Atlas)
-- npm or yarn
+- PostgreSQL
+- PostGIS extension installed
+- npm
 
 ### Installation
 
 ```bash
-# Install dependencies
 npm install
-
-# Copy environment variables
-cp .env.example .env
-
-# Edit .env with your configuration
-# Required: MONGO_URI, JWT_SECRET
+npm run prisma:generate
 ```
 
-### Running the Server
-
-```bash
-# Development mode (with hot reload)
-npm run dev
-
-# Build for production
-npm run build
-
-# Start production server
-npm start
-```
-
-The server will start on `http://localhost:8000` (or your configured PORT).
-
-## 📚 API Documentation
-
-### Swagger UI
-
-Access the interactive API documentation at:
-
-- **Swagger UI**: `http://localhost:8000/api-docs`
-- **OpenAPI JSON**: `http://localhost:8000/api-docs.json`
-
-The Swagger UI provides:
-- Complete endpoint documentation
-- Interactive testing ("Try it out" feature)
-- Request/response schemas
-- Authentication support
-
-### Using Swagger UI
-
-1. Start the server: `npm run dev`
-2. Open `http://localhost:8000/api-docs` in your browser
-3. Explore endpoints by expanding sections
-4. Click "Try it out" to test endpoints
-5. Use "Authorize" button to add your JWT token
-
-For detailed API documentation, see [API_DOCUMENTATION.md](./API_DOCUMENTATION.md).
-
-## 🔐 Authentication
-
-The API uses JWT (JSON Web Tokens) for authentication.
-
-### Quick Example
-
-```bash
-# 1. Register a user
-curl -X POST http://localhost:8000/api/auth/register \
-  -H "Content-Type: application/json" \
-  -d '{
-    "email": "user@example.com",
-    "passWord": "SecurePass123!",
-    "firstName": "John",
-    "lastName": "Doe",
-    "role": "agent"
-  }'
-
-# 2. Login
-curl -X POST http://localhost:8000/api/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{
-    "email": "user@example.com",
-    "password": "SecurePass123!"
-  }'
-
-# 3. Use the access token
-curl -X GET http://localhost:8000/api/auth/me \
-  -H "Authorization: Bearer <your-access-token>"
-```
-
-## 📁 Project Structure
-
-```
-ufarmx-apis/
-├── src/
-│   ├── config/          # Configuration (database, env, swagger)
-│   ├── controllers/     # Route handlers
-│   ├── interfaces/      # TypeScript interfaces
-│   ├── middlewares/     # Express middlewares
-│   ├── models/          # Mongoose models
-│   ├── routes/          # Express routes
-│   ├── utils/           # Utility functions
-│   ├── app.ts           # Express app setup
-│   └── server.ts        # Server entry point
-├── dist/                # Compiled JavaScript (generated)
-├── .env                 # Environment variables (create from .env.example)
-├── package.json
-├── tsconfig.json
-├── README.md
-└── API_DOCUMENTATION.md
-```
-
-## 🛠️ Development
-
-### Available Scripts
-
-```bash
-npm run dev          # Start development server with hot reload
-npm run build        # Build TypeScript to JavaScript
-npm start            # Start production server
-npm run lint         # Run ESLint
-npm run lint:fix     # Fix ESLint errors
-npm run format       # Format code with Prettier
-npm test             # Run tests
-npm run test:watch   # Run tests in watch mode
-npm run test:coverage # Run tests with coverage
-```
-
-### Adding New Endpoints
-
-1. **Create Controller** (`src/controllers/`)
-   ```typescript
-   export const myController = async (req, res, next) => {
-     // Controller logic
-   };
-   ```
-
-2. **Create Route** (`src/routes/`)
-   ```typescript
-   /**
-    * @swagger
-    * /endpoint:
-    *   get:
-    *     summary: Description
-    *     tags: [TagName]
-    */
-   router.get('/endpoint', authenticate, myController);
-   ```
-
-3. **Register Route** (`src/app.ts`)
-   ```typescript
-   import myRoutes from './routes/my.routes.js';
-   app.use('/api/my', myRoutes);
-   ```
-
-## 🔒 Security Features
-
-- ✅ JWT Authentication
-- ✅ Password hashing (bcrypt)
-- ✅ Rate limiting
-- ✅ CORS protection
-- ✅ Helmet.js security headers
-- ✅ NoSQL injection prevention
-- ✅ Input validation (Joi)
-- ✅ XSS protection
-
-## 📊 Database Schema
-
-⚠️ **IMPORTANT**: This API preserves the exact database schema from production.
-
-- Field names match exactly (`passWord`, `is_active`, `user_id`)
-- Collection names match exactly (`userdbs`, `admindbs`, `agentdbs`)
-- No database migration required
-- Full backward compatibility
-
-See [DATABASE_SCHEMA_REFERENCE.md](../../DATABASE_SCHEMA_REFERENCE.md) for details.
-
-## 🌐 Environment Variables
-
-Create a `.env` file with:
+Create a `.env` file:
 
 ```env
-# Server
 NODE_ENV=development
 PORT=8000
-
-# Database
-MONGO_URI=mongodb://localhost:27017/ufarmx
-
-# JWT
-JWT_SECRET=your-secret-key-here
-JWT_EXPIRES_IN=7d
-JWT_REFRESH_EXPIRES_IN=30d
-
-# CORS
-CORS_ORIGIN=http://localhost:3000
-
-# Rate Limiting
-RATE_LIMIT_WINDOW_MS=900000
-RATE_LIMIT_MAX_REQUESTS=100
-
-# AWS (Optional)
-AWS_ACCESS_KEY_ID=
-AWS_SECRET_ACCESS_KEY=
-AWS_S3_REGION=
-AWS_S3_BUCKET=
-AWS_SES_REGION=
-AWS_SES_FROM_EMAIL=
-
-# OpenAI (Optional)
-OPENAI_API_KEY=
+DATABASE_URL="postgresql://YOUR_USER:YOUR_PASSWORD@localhost:5432/YOUR_DATABASE?schema=public"
+CORS_ORIGIN=*
 ```
 
-## 📝 API Response Format
+Run migrations:
 
-### Success Response
+```bash
+npm run prisma:migrate
+```
+
+Start the server:
+
+```bash
+npm run dev
+```
+
+The server runs on `http://localhost:8000` unless `PORT` is changed.
+
+## API Routes
+
+The farm routes are mounted at both `/api/farms` and `/api/v1/farms`. Prefer `/api/v1/farms` for new clients.
+
+```txt
+POST /api/v1/farms
+GET  /api/v1/farms
+GET  /api/v1/farms?lat={lat}&lng={lng}&radius_km={radius}
+POST /api/v1/farms/:farm_id/readings
+GET  /api/v1/farms/:farm_id/readings/summary
+```
+
+### Create Farm
+
+```bash
+curl -X POST http://localhost:8000/api/v1/farms \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Adeyemi Farm",
+    "owner_id": "usr_01HXZ",
+    "geometry": {
+      "type": "Polygon",
+      "coordinates": [
+        [
+          [3.3792, 6.5244],
+          [3.3801, 6.5244],
+          [3.3801, 6.5252],
+          [3.3792, 6.5252],
+          [3.3792, 6.5244]
+        ]
+      ]
+    }
+  }'
+```
+
+### List Farms
+
+```bash
+curl http://localhost:8000/api/v1/farms
+```
+
+### Search Farms Within A Radius
+
+Returns a GeoJSON `FeatureCollection` of farms whose boundaries intersect a circle around the given point.
+
+```bash
+curl "http://localhost:8000/api/v1/farms?lat=6.5244&lng=3.3792&radius_km=5"
+```
+
+The spatial search uses PostGIS `ST_DWithin` in the database. Latitude and longitude are validated against plausible Nigeria bounds with a small tolerance.
+
+### Add Farm Readings
+
+```bash
+curl -X POST http://localhost:8000/api/v1/farms/45c37e29-72d1-43e7-a47a-8d9239aab888/readings \
+  -H "Content-Type: application/json" \
+  -d '{
+    "readings": [
+      {
+        "sensor_id": "s_01",
+        "recorded_at": "2024-11-01T08:00:00Z",
+        "metric": "soil_moisture",
+        "value": 0.34,
+        "unit": "m3/m3"
+      },
+      {
+        "sensor_id": "s_01",
+        "recorded_at": "2024-11-01T08:00:00Z",
+        "metric": "temperature",
+        "value": 28.2,
+        "unit": "celsius"
+      },
+      {
+        "sensor_id": "s_01",
+        "recorded_at": "2024-11-01T08:00:00Z",
+        "metric": "ndvi",
+        "value": 0.71,
+        "unit": "index"
+      }
+    ]
+  }'
+```
+
+### Get 30-Day Reading Summary
+
+Returns per-metric `min`, `max`, `mean`, `latest_value`, and `reading_count` for readings recorded in the last 30 days.
+
+```bash
+curl http://localhost:8000/api/v1/farms/45c37e29-72d1-43e7-a47a-8d9239aab888/readings/summary
+```
+
+If the farm exists but has no readings in the 30-day window, the API returns an empty `summary` array with a clear message.
+
+## Response Shape
+
+Successful responses use this wrapper:
 
 ```json
 {
   "success": true,
-  "message": "Operation successful",
-  "data": { ... }
+  "message": "Success message",
+  "data": {}
 }
 ```
 
-### Error Response
+Spatial farm searches return GeoJSON in `data`:
 
 ```json
 {
-  "success": false,
-  "message": "Error message",
-  "error": "Detailed error information"
+  "success": true,
+  "message": "Farms within radius retrieved successfully",
+  "data": {
+    "type": "FeatureCollection",
+    "features": []
+  }
 }
 ```
 
-## 🧪 Testing
+## Database
 
-### Using Swagger UI
+The active tables are `farms` and `farm_readings`.
 
-1. Navigate to `http://localhost:8000/api-docs`
-2. Expand an endpoint
-3. Click "Try it out"
-4. Fill in parameters
-5. Click "Execute"
-6. View response
+```sql
+CREATE TABLE farms (
+  id UUID DEFAULT gen_random_uuid(),
+  name VARCHAR(255) NOT NULL,
+  owner_id VARCHAR(255) NOT NULL,
+  geometry geometry(Polygon, 4326) NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT farms_pkey PRIMARY KEY (id)
+);
 
-### Health Check
-
-```bash
-curl http://localhost:8000/health
+CREATE TABLE farm_readings (
+  id UUID DEFAULT gen_random_uuid(),
+  farm_id UUID NOT NULL,
+  sensor_id VARCHAR(255) NOT NULL,
+  recorded_at TIMESTAMPTZ NOT NULL,
+  metric VARCHAR(50) NOT NULL,
+  value NUMERIC(10, 4) NOT NULL,
+  unit VARCHAR(30) NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT farm_readings_pkey PRIMARY KEY (id),
+  CONSTRAINT farm_readings_farm_id_fkey FOREIGN KEY (farm_id) REFERENCES farms(id) ON DELETE CASCADE
+);
 ```
 
-## 📖 Documentation
+The `geometry` column stores farm boundaries as PostGIS `geometry(Polygon, 4326)`. A GiST index is created on this column to support spatial queries.
 
-- **[API_DOCUMENTATION.md](./API_DOCUMENTATION.md)** - Complete API documentation
-- **[Swagger UI](http://localhost:8000/api-docs)** - Interactive API explorer
-- **[UNIFIED_BACKEND_PLAN.md](../../UNIFIED_BACKEND_PLAN.md)** - Implementation plan
-- **[DATABASE_SCHEMA_REFERENCE.md](../../DATABASE_SCHEMA_REFERENCE.md)** - Database schema reference
+## Project Structure
 
-## 🚧 Current Status
+```txt
+src/
+  app.ts
+  index.ts
+  config/
+  controllers/
+  interfaces/
+  middlewares/
+  routes/
+  services/
+  tests/
+  utils/
+prisma/
+  schema.prisma
+  migrations/
+```
 
-### ✅ Completed
+## Scripts
 
-- Project setup and infrastructure
-- Authentication system (register, login, JWT)
-- Database connection
-- Security middleware
-- Error handling
-- Swagger documentation
-
-### 🚧 In Progress
-
-- User management (Admin, Agent, Retailer)
-- Farmer management
-- Product management
-- Order management
-- Form system
-- AI integration
-
-## 🤝 Contributing
-
-1. Follow TypeScript strict mode
-2. Preserve database schema exactly
-3. Add Swagger documentation for new endpoints
-4. Write tests for new features
-5. Follow existing code patterns
-
-## 📄 License
-
-MIT License
-
-## 🆘 Support
-
-- **Email**: support@ufarmx.com
-- **Documentation**: See Swagger UI at `/api-docs`
-- **Issues**: Create an issue in the repository
-
----
-
-**Built with ❤️ for UFarmX**
+```bash
+npm run dev              # Start dev server
+npm run build            # Compile TypeScript
+npm start                # Run compiled app
+npm test                 # Run Jest tests
+npm run prisma:generate  # Generate Prisma client
+npm run prisma:migrate   # Run Prisma migrations
+```
