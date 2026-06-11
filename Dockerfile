@@ -1,4 +1,4 @@
-# Multi-stage build for UFarmX API
+# Multi-stage build for FarmSmarter API
 # Stage 1: Build
 FROM node:20-alpine AS builder
 

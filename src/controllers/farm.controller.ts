@@ -2,6 +2,10 @@ import { NextFunction, Request, Response } from 'express';
 import { farmService } from '../services/farm.service.js';
 import { sendSuccess } from '../utils/response.util.js';
 
+type FarmIdParams = {
+  farm_id: string;
+};
+
 export const createFarm = async (
   req: Request,
   res: Response,
@@ -47,7 +51,7 @@ export const getFarms = async (
 
 
 export const updateFarmReadingsById = async (
-  req: Request,
+  req: Request<FarmIdParams>,
   res: Response,
   next: NextFunction
 ): Promise<void> => {
@@ -60,7 +64,7 @@ export const updateFarmReadingsById = async (
 };
 
 export const getFarmReadingsSummaryById = async (
-  req: Request,
+  req: Request<FarmIdParams>,
   res: Response,
   next: NextFunction
 ): Promise<void> => {
@@ -72,19 +76,6 @@ export const getFarmReadingsSummaryById = async (
         : 'Farm readings summary retrieved successfully';
 
     sendSuccess(res, summary, message);
-  } catch (error) {
-    next(error);
-  }
-};
-
-export const deleteFarm = async (
-  req: Request,
-  res: Response,
-  next: NextFunction
-): Promise<void> => {
-  try {
-    await farmService.deleteFarm(req.params.id);
-    sendSuccess(res, null, 'Farm deleted successfully');
   } catch (error) {
     next(error);
   }

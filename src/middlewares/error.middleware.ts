@@ -1,5 +1,5 @@
-import { Prisma } from '@prisma/client';
 import { NextFunction, Request, Response } from 'express';
+import { QueryFailedError } from 'typeorm';
 import { env } from '../config/env.js';
 import { AppError } from '../utils/error.util.js';
 
@@ -20,8 +20,8 @@ export const errorHandler = (
     isOperational = err.isOperational;
   }
 
-  if (err instanceof Prisma.PrismaClientKnownRequestError) {
-    if (err.code === 'P2002') {
+  if (err instanceof QueryFailedError) {
+    if ((err as QueryFailedError & { code?: string }).code === '23505') {
       statusCode = 409;
       message = 'Duplicate field value entered';
     }

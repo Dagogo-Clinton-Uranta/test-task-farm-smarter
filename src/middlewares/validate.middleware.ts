@@ -1,6 +1,6 @@
 import { NextFunction, Request, Response } from 'express';
 import Joi from 'joi';
-import { BadRequestError } from '../utils/error.util.js';
+import { ValidationError } from '../utils/error.util.js';
 
 export const validate = (schema: Joi.ObjectSchema) => {
   return (req: Request, res: Response, next: NextFunction): void => {
@@ -10,8 +10,10 @@ export const validate = (schema: Joi.ObjectSchema) => {
     });
 
     if (error) {
-      const message = error.details.map((detail) => detail.message).join(', ');
-      next(new BadRequestError(message));
+      const message = error.details
+        .map((detail) => detail.context?.message || detail.message)
+        .join(', ');
+      next(new ValidationError(message));
       return;
     }
 

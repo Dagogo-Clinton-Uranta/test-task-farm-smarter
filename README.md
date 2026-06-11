@@ -1,6 +1,6 @@
 # Farm Boundary API
 
-TypeScript + Express API for storing farm boundary polygons and farm sensor readings in PostgreSQL/PostGIS. Prisma is used for database access, with raw SQL for PostGIS geometry operations because Prisma does not natively model PostGIS geometry columns.
+TypeScript + Express API for storing farm boundary polygons and farm sensor readings in PostgreSQL/PostGIS. TypeORM is used for database setup and access, with raw SQL for PostGIS geometry operations where spatial functions are clearer and more direct.
 
 ## Quick Start
 
@@ -15,7 +15,6 @@ TypeScript + Express API for storing farm boundary polygons and farm sensor read
 
 ```bash
 npm install
-npm run prisma:generate
 ```
 
 Create a `.env` file:
@@ -30,7 +29,7 @@ CORS_ORIGIN=*
 Run migrations:
 
 ```bash
-npm run prisma:migrate
+npm run typeorm:migrate
 ```
 
 Start the server:
@@ -72,9 +71,15 @@ curl -X POST http://localhost:8000/api/v1/farms \
           [3.3792, 6.5244]
         ]
       ]
+    },
+    "properties": {
+      "crop_type": "maize",
+      "area_ha": 4.2
     }
   }'
 ```
+
+`properties.area_ha` is not trusted or stored from the client. The API calculates the area in hectares server-side with PostGIS and returns that calculated value.
 
 ### List Farms
 
@@ -132,7 +137,7 @@ Returns per-metric `min`, `max`, `mean`, `latest_value`, and `reading_count` for
 curl http://localhost:8000/api/v1/farms/45c37e29-72d1-43e7-a47a-8d9239aab888/readings/summary
 ```
 
-If the farm exists but has no readings in the 30-day window, the API returns an empty `summary` array with a clear message.
+If the farm exists but has no readings for the last 30-days, the API returns an empty `summary` array with a clear message.
 
 ## Response Shape
 
@@ -168,10 +173,13 @@ CREATE TABLE farms (
   id UUID DEFAULT gen_random_uuid(),
   name VARCHAR(255) NOT NULL,
   owner_id VARCHAR(255) NOT NULL,
-  geometry geometry(Polygon, 4326) NOT NULL,
+  geometry geometry(Geometry, 4326) NOT NULL,
+  crop_type VARCHAR(100) NOT NULL,
+  area_hectares NUMERIC(14, 4) NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  CONSTRAINT farms_pkey PRIMARY KEY (id)
+  CONSTRAINT farms_pkey PRIMARY KEY (id),
+  CONSTRAINT farms_geometry_type_check CHECK (GeometryType(geometry) IN ('POLYGON', 'MULTIPOLYGON'))
 );
 
 CREATE TABLE farm_readings (
@@ -188,7 +196,7 @@ CREATE TABLE farm_readings (
 );
 ```
 
-The `geometry` column stores farm boundaries as PostGIS `geometry(Polygon, 4326)`. A GiST index is created on this column to support spatial queries.
+The `geometry` column stores farm boundaries as PostGIS `geometry(Geometry, 4326)` with a check constraint that only allows Polygon or MultiPolygon values. A GiST index is created on this column to support spatial queries.
 
 ## Project Structure
 
@@ -198,16 +206,17 @@ src/
   index.ts
   config/
   controllers/
+  entities/
   interfaces/
+  migrations/
   middlewares/
   routes/
   services/
   tests/
   utils/
-prisma/
-  schema.prisma
-  migrations/
 ```
+
+Services are where the bulk of database interactions take place, so we can more easily swap out service implementations while the controllers remain intact. This is another design feature aimed at more scalable code.
 
 ## Scripts
 
@@ -216,6 +225,33 @@ npm run dev              # Start dev server
 npm run build            # Compile TypeScript
 npm start                # Run compiled app
 npm test                 # Run Jest tests
-npm run prisma:generate  # Generate Prisma client
-npm run prisma:migrate   # Run Prisma migrations
+npm run typeorm:migrate  # Run TypeORM migrations
+npm run typeorm:revert   # Revert the latest TypeORM migration
+
 ```
+
+## shortcomings /tradeoffs
+
+  1. This applies to the validateFarmReadings helper Function, for the updateFarmReadingsById service:
+      If i had more time, I would use POSTGRESQL
+    to run the array of readings, and do the validation, 
+    because it would handle larger data sets faster, but
+    I decided to loop through an array and set all my validation conditions
+   I assumed there will be only 3 readings, temperature, soil moisture and ndvi
+   and the readings will be submitted on a daily basis, so I did not worry about performance too much,
+    but if there were more readings, then it would be better to do the validation in the database, because it would be faster and more efficient.
+
+  2.NOTE:- I am unsure if this is a valid validation so i did not set it as a condition -
+    perhaps temparature, ndvi and soil moisture should all have the same recorded_at date,
+    because they are usually recorded at the same time (MAYBE),
+    but i am not sure if that is a valid assumption, so i left it as a warning in the code comments.
+ 
+  3.  I also set a validation that temperature readings must
+    be below 50 degrees celsius, because that is impossible 
+   in a farm setting, but again, I am not sure if that is a 
+   valid assumption, so I left it as a warning in the code comments.
+
+
+## Note
+
+I added unit tests for each of the services that correspond to a specific route as a way of keeping focus on the end goal of each requirement. This is another way of ensuring the app is scalable, because unit tests remind developers of the end goal of a route or function even as the code grows and changes.

@@ -3,17 +3,36 @@ export type GeoJsonPolygon = {
   coordinates: number[][][];
 };
 
+export type GeoJsonMultiPolygon = {
+  type: 'MultiPolygon';
+  coordinates: number[][][][];
+};
+
+export type FarmGeometry = GeoJsonPolygon | GeoJsonMultiPolygon;
+
+export interface FarmPropertiesInput {
+  crop_type: string;
+  area_ha?: number;
+}
+
+export interface FarmPropertiesResponse {
+  crop_type: string;
+  area_ha: number;
+}
+
 export interface CreateFarmInput {
   name: string;
   owner_id: string;
-  geometry: GeoJsonPolygon;
+  geometry: FarmGeometry;
+  properties: FarmPropertiesInput;
 }
 
 export interface FarmResponse {
   id: string;
   name: string;
   owner_id: string;
-  geometry: GeoJsonPolygon;
+  geometry: FarmGeometry;
+  properties: FarmPropertiesResponse;
   created_at: Date;
   updated_at: Date;
 }
@@ -26,11 +45,13 @@ export interface FarmSearchInput {
 
 export interface FarmFeature {
   type: 'Feature';
-  geometry: GeoJsonPolygon;
+  geometry: FarmGeometry;
   properties: {
     id: string;
     name: string;
     owner_id: string;
+    crop_type: string;
+    area_ha: number;
     created_at: Date;
     updated_at: Date;
   };

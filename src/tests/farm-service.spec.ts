@@ -2,19 +2,23 @@
 
 import { describe, expect, it, jest, beforeEach } from '@jest/globals';
 
-const queryRawMock = jest.fn();
-const executeRawMock = jest.fn();
+const queryMock = jest.fn();
 const transactionMock = jest.fn();
 
+//I am using unstable mock module, because jest was giving me errors when using jest.mock() to call the database module, because I am not using CommonJS. 
+
 jest.unstable_mockModule('../config/database.js', () => ({
-  prisma: {
-    $queryRaw: queryRawMock,
-    $executeRaw: executeRawMock,
-    $transaction: transactionMock,
+  appDataSource: {
+    query: queryMock,
+    transaction: transactionMock,
+    initialize: jest.fn(),
+    destroy: jest.fn(),
+    isInitialized: false,
   },
 }));
 
 const { farmService } = await import('../services/farm.service.js');
+const { createFarmSchema } = await import('../middlewares/validation.middleware.js');
 
 describe('farmService', () => {
   beforeEach(() => {
@@ -27,7 +31,7 @@ describe('farmService', () => {
       name: 'Adeyemi Farm',
       owner_id: 'usr_01HXZ',
       geometry: {
-        type: 'Polygon',
+        type: 'Polygon' as const,
         coordinates: [
           [
             [3.3792, 6.5244],
@@ -38,27 +42,154 @@ describe('farmService', () => {
           ],
         ],
       },
+      crop_type: 'maize',
+      area_hectares: '0.8760',
+      properties: {
+        crop_type: 'maize',
+        area_ha: 0.876,
+      },
       created_at: new Date(),
       updated_at: new Date(),
     };
 
-    queryRawMock.mockResolvedValue([farm] as never);
+    queryMock
+      .mockResolvedValueOnce([
+        {
+          geometry_type: 'POLYGON',
+          is_valid: true,
+          invalid_reason: 'Valid Geometry',
+        },
+      ] as never)
+      .mockResolvedValueOnce([farm] as never);
 
     const result = await farmService.createFarm({
       name: farm.name,
       owner_id: farm.owner_id,
       geometry: farm.geometry,
+      properties: {
+        crop_type: 'maize',
+        area_ha: 4.2,
+      },
     });
 
-    expect(result).toEqual(farm);
-    expect(queryRawMock).toHaveBeenCalledTimes(1);
+    expect(result).toEqual({
+      id: farm.id,
+      name: farm.name,
+      owner_id: farm.owner_id,
+      geometry: farm.geometry,
+      properties: {
+        crop_type: 'maize',
+        area_ha: 0.876,
+      },
+      created_at: farm.created_at,
+      updated_at: farm.updated_at,
+    });
+    expect(queryMock).toHaveBeenCalledTimes(2);
+    expect(queryMock.mock.calls[1]?.[1]).toEqual([
+      farm.name,
+      farm.owner_id,
+      JSON.stringify(farm.geometry),
+      'maize',
+    ]);
+  });
+
+  it('creates a farm from GeoJSON multipolygon input', async () => {
+    const geometry = {
+      type: 'MultiPolygon' as const,
+      coordinates: [
+        [
+          [
+            [3.3792, 6.5244],
+            [3.3801, 6.5244],
+            [3.3801, 6.5252],
+            [3.3792, 6.5252],
+            [3.3792, 6.5244],
+          ],
+        ],
+      ],
+    };
+
+    queryMock
+      .mockResolvedValueOnce([
+        {
+          geometry_type: 'MULTIPOLYGON',
+          is_valid: true,
+          invalid_reason: 'Valid Geometry',
+        },
+      ] as never)
+      .mockResolvedValueOnce([
+        {
+          id: '45c37e29-72d1-43e7-a47a-8d9239aab888',
+          name: 'Adeyemi Farm',
+          owner_id: 'usr_01HXZ',
+          geometry,
+          crop_type: 'maize',
+          area_hectares: '0.8760',
+          created_at: new Date(),
+          updated_at: new Date(),
+        },
+      ] as never);
+
+    const result = await farmService.createFarm({
+      name: 'Adeyemi Farm',
+      owner_id: 'usr_01HXZ',
+      geometry,
+      properties: {
+        crop_type: 'maize',
+        area_ha: 4.2,
+      },
+    });
+
+    expect(result.geometry.type).toBe('MultiPolygon');
+    expect(result.properties).toEqual({
+      crop_type: 'maize',
+      area_ha: 0.876,
+    });
+  });
+
+  it('rejects invalid farm geometry before inserting', async () => {
+    queryMock.mockResolvedValueOnce([
+      {
+        geometry_type: 'POLYGON',
+        is_valid: false,
+        invalid_reason: 'Self-intersection',
+      },
+    ] as never);
+
+    await expect(
+      farmService.createFarm({
+        name: 'Adeyemi Farm',
+        owner_id: 'usr_01HXZ',
+        geometry: {
+          type: 'Polygon',
+          coordinates: [
+            [
+              [3.3792, 6.5244],
+              [3.3801, 6.5244],
+              [3.3792, 6.5252],
+              [3.3801, 6.5252],
+              [3.3792, 6.5244],
+            ],
+          ],
+        },
+        properties: {
+          crop_type: 'maize',
+          area_ha: 4.2,
+        },
+      })
+    ).rejects.toMatchObject({
+      statusCode: 422,
+      message: 'geometry must be a valid GeoJSON Polygon or MultiPolygon: Self-intersection',
+    });
+
+    expect(queryMock).toHaveBeenCalledTimes(1);
   });
 
   it('returns farms within a radius as a GeoJSON FeatureCollection', async () => {
     const createdAt = new Date('2024-11-01T08:00:00Z');
     const updatedAt = new Date('2024-11-01T08:00:00Z');
 
-    queryRawMock.mockResolvedValue([
+    queryMock.mockResolvedValue([
       {
         id: '45c37e29-72d1-43e7-a47a-8d9239aab888',
         name: 'Adeyemi Farm',
@@ -75,6 +206,8 @@ describe('farmService', () => {
             ],
           ],
         },
+        crop_type: 'maize',
+        area_hectares: '0.8760',
         created_at: createdAt,
         updated_at: updatedAt,
       },
@@ -107,16 +240,19 @@ describe('farmService', () => {
             id: '45c37e29-72d1-43e7-a47a-8d9239aab888',
             name: 'Adeyemi Farm',
             owner_id: 'usr_01HXZ',
+            crop_type: 'maize',
+            area_ha: 0.876,
             created_at: createdAt,
             updated_at: updatedAt,
           },
         },
       ],
     });
-    expect(queryRawMock).toHaveBeenCalledTimes(1);
+    expect(queryMock).toHaveBeenCalledTimes(1);
   });
 
-  it('rejects farm radius searches outside plausible Nigeria latitude bounds', async () => {
+  //NIGERIA IS BETWEEN 4 AND 14 DEGREES LATITUDE, SO 1 AND 17 REPRESENTS + OR - 3 DEGREES ERROR RANGE
+  it('rejects farm radius searches outside of Nigeria latitude boundaries', async () => {
     await expect(
       farmService.getFarmsWithinRadius({
         lat: 30,
@@ -128,13 +264,14 @@ describe('farmService', () => {
       message: 'lat must be between 1 and 17 for Nigeria search',
     });
 
-    expect(queryRawMock).not.toHaveBeenCalled();
+    expect(queryMock).not.toHaveBeenCalled();
   });
 
+  
   it('updates farm readings in one transaction', async () => {
-    queryRawMock.mockResolvedValue([{ id: '45c37e29-72d1-43e7-a47a-8d9239aab888' }] as never);
+    queryMock.mockResolvedValue([{ id: '45c37e29-72d1-43e7-a47a-8d9239aab888' }] as never);
     transactionMock.mockImplementation(async (callback: any) => {
-      await callback({ $executeRaw: executeRawMock });
+      await callback({ query: queryMock });
     });
 
     const result = await farmService.updateFarmReadingsById('45c37e29-72d1-43e7-a47a-8d9239aab888', {
@@ -169,7 +306,7 @@ describe('farmService', () => {
       errors: [],
     });
     expect(transactionMock).toHaveBeenCalledTimes(1);
-    expect(executeRawMock).toHaveBeenCalledTimes(1);
+    expect(queryMock).toHaveBeenCalledTimes(2);
   });
 
   it('rejects an invalid farm_id before querying the database', async () => {
@@ -190,12 +327,12 @@ describe('farmService', () => {
       message: 'farm_id must be a valid UUID',
     });
 
-    expect(queryRawMock).not.toHaveBeenCalled();
+    expect(queryMock).not.toHaveBeenCalled();
     expect(transactionMock).not.toHaveBeenCalled();
   });
 
   it('rejects invalid readings before starting a transaction', async () => {
-    queryRawMock.mockResolvedValue([{ id: '45c37e29-72d1-43e7-a47a-8d9239aab888' }] as never);
+    queryMock.mockResolvedValue([{ id: '45c37e29-72d1-43e7-a47a-8d9239aab888' }] as never);
 
     await expect(
       farmService.updateFarmReadingsById('45c37e29-72d1-43e7-a47a-8d9239aab888', {
@@ -230,26 +367,26 @@ describe('farmService', () => {
   });
 
   it('returns 30-day farm readings summary rows from database aggregates', async () => {
-    queryRawMock.mockResolvedValue([
-      {
-        farm_exists: true,
-        metric: 'temperature',
-        min: '23.1000',
-        max: '31.5000',
-        mean: '27.3000',
-        latest_value: '29.8000',
-        reading_count: BigInt(4),
-      },
-      {
-        farm_exists: true,
-        metric: 'ndvi',
-        min: '0.6100',
-        max: '0.7900',
-        mean: '0.7000',
-        latest_value: '0.7500',
-        reading_count: BigInt(3),
-      },
-    ] as never);
+    queryMock
+      .mockResolvedValueOnce([{ id: '45c37e29-72d1-43e7-a47a-8d9239aab888' }] as never)
+      .mockResolvedValueOnce([
+        {
+          metric: 'temperature',
+          min: '23.1000',
+          max: '31.5000',
+          mean: '27.3000',
+          latest_value: '29.8000',
+          reading_count: BigInt(4),
+        },
+        {
+          metric: 'ndvi',
+          min: '0.6100',
+          max: '0.7900',
+          mean: '0.7000',
+          latest_value: '0.7500',
+          reading_count: BigInt(3),
+        },
+      ] as never);
 
     const result = await farmService.getFarmReadingsSummaryById(
       '45c37e29-72d1-43e7-a47a-8d9239aab888'
@@ -280,17 +417,9 @@ describe('farmService', () => {
   });
 
   it('returns an empty summary when the farm has no readings in the window', async () => {
-    queryRawMock.mockResolvedValue([
-      {
-        farm_exists: true,
-        metric: null,
-        min: null,
-        max: null,
-        mean: null,
-        latest_value: null,
-        reading_count: null,
-      },
-    ] as never);
+    queryMock
+      .mockResolvedValueOnce([{ id: '45c37e29-72d1-43e7-a47a-8d9239aab888' }] as never)
+      .mockResolvedValueOnce([] as never);
 
     const result = await farmService.getFarmReadingsSummaryById(
       '45c37e29-72d1-43e7-a47a-8d9239aab888'
@@ -304,17 +433,7 @@ describe('farmService', () => {
   });
 
   it('returns 404 when fetching readings summary for a missing farm', async () => {
-    queryRawMock.mockResolvedValue([
-      {
-        farm_exists: false,
-        metric: null,
-        min: null,
-        max: null,
-        mean: null,
-        latest_value: null,
-        reading_count: null,
-      },
-    ] as never);
+    queryMock.mockResolvedValueOnce([] as never);
 
     await expect(
       farmService.getFarmReadingsSummaryById('45c37e29-72d1-43e7-a47a-8d9239aab888')
@@ -322,5 +441,76 @@ describe('farmService', () => {
       statusCode: 404,
       message: 'Farm not found',
     });
+    expect(queryMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('createFarmSchema', () => {
+  it('accepts polygon and multipolygon farm geometry with properties', () => {
+    const basePayload = {
+      name: 'Adeyemi Farm',
+      owner_id: 'usr_01HXZ',
+      properties: {
+        crop_type: 'maize',
+        area_ha: 4.2,
+      },
+    };
+
+    const polygonResult = createFarmSchema.validate({
+      ...basePayload,
+      geometry: {
+        type: 'Polygon',
+        coordinates: [
+          [
+            [3.3792, 6.5244],
+            [3.3801, 6.5244],
+            [3.3801, 6.5252],
+            [3.3792, 6.5252],
+            [3.3792, 6.5244],
+          ],
+        ],
+      },
+    });
+
+    const multiPolygonResult = createFarmSchema.validate({
+      ...basePayload,
+      geometry: {
+        type: 'MultiPolygon',
+        coordinates: [
+          [
+            [
+              [3.3792, 6.5244],
+              [3.3801, 6.5244],
+              [3.3801, 6.5252],
+              [3.3792, 6.5252],
+              [3.3792, 6.5244],
+            ],
+          ],
+        ],
+      },
+    });
+
+    expect(polygonResult.error).toBeUndefined();
+    expect(multiPolygonResult.error).toBeUndefined();
+  });
+
+  it('rejects non-polygon farm geometry', () => {
+    const result = createFarmSchema.validate({
+      name: 'Adeyemi Farm',
+      owner_id: 'usr_01HXZ',
+      geometry: {
+        type: 'LineString',
+        coordinates: [
+          [3.3792, 6.5244],
+          [3.3801, 6.5244],
+        ],
+      },
+      properties: {
+        crop_type: 'maize',
+        area_ha: 4.2,
+      },
+    });
+
+    expect(result.error?.details[0]?.message).toBe('geometry.type must be Polygon or MultiPolygon');
   });
 });

@@ -1,5 +1,5 @@
-import { Prisma } from '@prisma/client';
-import { prisma } from '../config/database.js';
+import { EntityManager } from 'typeorm';
+import { appDataSource } from '../config/database.js';
 import {
   CreateFarmInput,
   FarmFeature,
@@ -10,7 +10,7 @@ import {
   FarmReadingsSummaryResponse,
   FarmResponse,
   FarmSearchInput,
-  GeoJsonPolygon,
+  FarmGeometry,
   ReadingMetric,
   ReadingValidationError,
   UpdateFarmReadingsInput,
@@ -21,18 +21,26 @@ type FarmRow = {
   id: string;
   name: string;
   owner_id: string;
-  geometry: string | GeoJsonPolygon;
+  geometry: string | FarmGeometry;
+  crop_type: string;
+  area_hectares: number | string;
   created_at: Date;
   updated_at: Date;
+};
+
+type GeometryValidationRow = {
+  geometry_type: string;
+  is_valid: boolean;
+  invalid_reason: string;
 };
 
 type FarmMetricSummaryRow = {
   farm_exists: boolean;
   metric: ReadingMetric | null;
-  min: Prisma.Decimal | number | string | null;
-  max: Prisma.Decimal | number | string | null;
-  mean: Prisma.Decimal | number | string | null;
-  latest_value: Prisma.Decimal | number | string | null;
+  min: number | string | null;
+  max: number | string | null;
+  mean: number | string | null;
+  latest_value: number | string | null;
   reading_count: bigint | number | string | null;
 };
 
@@ -52,9 +60,9 @@ const nigeriaBounds = {
 const uuidPattern =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
-const parseGeometry = (geometry: string | GeoJsonPolygon): GeoJsonPolygon => {
+const parseGeometry = (geometry: string | FarmGeometry): FarmGeometry => {
   if (typeof geometry === 'string') {
-    return JSON.parse(geometry) as GeoJsonPolygon;
+    return JSON.parse(geometry) as FarmGeometry;
   }
 
   return geometry;
@@ -65,11 +73,15 @@ const toFarmResponse = (row: FarmRow): FarmResponse => ({
   name: row.name,
   owner_id: row.owner_id,
   geometry: parseGeometry(row.geometry),
+  properties: {
+    crop_type: row.crop_type,
+    area_ha: toNumber(row.area_hectares),
+  },
   created_at: row.created_at,
   updated_at: row.updated_at,
 });
 
-const toNumber = (value: Prisma.Decimal | number | string): number => Number(value);
+const toNumber = (value: number | string): number => Number(value);
 
 const toFarmFeature = (row: FarmRow): FarmFeature => ({
   type: 'Feature',
@@ -78,6 +90,8 @@ const toFarmFeature = (row: FarmRow): FarmFeature => ({
     id: row.id,
     name: row.name,
     owner_id: row.owner_id,
+    crop_type: row.crop_type,
+    area_ha: toNumber(row.area_hectares),
     created_at: row.created_at,
     updated_at: row.updated_at,
   },
@@ -111,22 +125,65 @@ const validateFarmSearchInput = ({ lat, lng, radius_km }: FarmSearchInput): void
 
 export const createFarm = async (input: CreateFarmInput): Promise<FarmResponse> => {
   const geoJson = JSON.stringify(input.geometry);
+  let validationRows: GeometryValidationRow[];
 
-  const rows = await prisma.$queryRaw<FarmRow[]>`
-    INSERT INTO farms (name, owner_id, geometry)
+  try {
+    validationRows = await appDataSource.query(
+      `
+      WITH input_geometry AS (
+        SELECT ST_SetSRID(ST_GeomFromGeoJSON($1), 4326) AS geometry
+      )
+      SELECT
+        GeometryType(geometry) AS geometry_type,
+        ST_IsValid(geometry) AS is_valid,
+        ST_IsValidReason(geometry) AS invalid_reason
+      FROM input_geometry
+    `,
+      [geoJson]
+    );
+  } catch {
+    throw new ValidationError('geometry must be a valid GeoJSON Polygon or MultiPolygon');
+  }
+
+  const geometryValidation = validationRows[0];
+
+  if (
+    !geometryValidation ||
+    !['POLYGON', 'MULTIPOLYGON'].includes(geometryValidation.geometry_type) ||
+    !geometryValidation.is_valid
+  ) {
+    throw new ValidationError(
+      `geometry must be a valid GeoJSON Polygon or MultiPolygon${
+        geometryValidation?.invalid_reason ? `: ${geometryValidation.invalid_reason}` : ''
+      }`
+    );
+  }
+
+  const rows = await appDataSource.query(
+    `
+    WITH input_geometry AS (
+      SELECT ST_SetSRID(ST_GeomFromGeoJSON($3), 4326) AS geometry
+    )
+    INSERT INTO farms (name, owner_id, geometry, crop_type, area_hectares)
     VALUES (
-      ${input.name},
-      ${input.owner_id},
-      ST_SetSRID(ST_GeomFromGeoJSON(${geoJson}), 4326)
+      $1,
+      $2,
+      (SELECT geometry FROM input_geometry),
+      $4,
+      ROUND(((SELECT ST_Area(geometry::geography) FROM input_geometry) / 10000)::numeric, 4)
     )
     RETURNING
       id,
       name,
       owner_id,
       ST_AsGeoJSON(geometry)::json AS geometry,
+      crop_type,
+      area_hectares,
       created_at,
       updated_at
-  `;
+  `,
+    [input.name, input.owner_id, geoJson, input.properties.crop_type]
+  );
 
   const row = rows[0];
 
@@ -138,17 +195,19 @@ export const createFarm = async (input: CreateFarmInput): Promise<FarmResponse> 
 };
 
 export const getFarms = async (): Promise<FarmResponse[]> => {
-  const rows = await prisma.$queryRaw<FarmRow[]>`
+  const rows = await appDataSource.query(`
     SELECT
       id,
       name,
       owner_id,
       ST_AsGeoJSON(geometry)::json AS geometry,
+      crop_type,
+      area_hectares,
       created_at,
       updated_at
     FROM farms
     ORDER BY created_at DESC
-  `;
+  `);
 
   return rows.map(toFarmResponse);
 };
@@ -158,24 +217,31 @@ export const getFarmsWithinRadius = async (
 ): Promise<FarmFeatureCollection> => {
   validateFarmSearchInput(input);
 
+
+  //PostGIS expects meters, so i convert input radius.
   const radiusMeters = input.radius_km * 1000;
 
-  const rows = await prisma.$queryRaw<FarmRow[]>`
+  const rows = await appDataSource.query(
+    `
     SELECT
       id,
       name,
       owner_id,
       ST_AsGeoJSON(geometry)::json AS geometry,
+      crop_type,
+      area_hectares,
       created_at,
       updated_at
     FROM farms
     WHERE ST_DWithin(
       geometry::geography,
-      ST_SetSRID(ST_MakePoint(${input.lng}, ${input.lat}), 4326)::geography,
-      ${radiusMeters}
+      ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography,
+      $3
     )
     ORDER BY created_at DESC
-  `;
+  `,
+    [input.lng, input.lat, radiusMeters]
+  );
 
   return {
     type: 'FeatureCollection',
@@ -184,18 +250,23 @@ export const getFarmsWithinRadius = async (
 };
 
 export const getFarmById = async (id: string): Promise<FarmResponse> => {
-  const rows = await prisma.$queryRaw<FarmRow[]>`
+  const rows = await appDataSource.query(
+    `
     SELECT
       id,
       name,
       owner_id,
       ST_AsGeoJSON(geometry)::json AS geometry,
+      crop_type,
+      area_hectares,
       created_at,
       updated_at
     FROM farms
-    WHERE id = ${id}::uuid
+    WHERE id = $1::uuid
     LIMIT 1
-  `;
+  `,
+    [id]
+  );
 
   if (!rows[0]) {
     throw new NotFoundError('Farm not found');
@@ -274,12 +345,15 @@ export const updateFarmReadingsById = async (
     throw new ValidationError('farm_id must be a valid UUID');
   }
 
-  const rows = await prisma.$queryRaw<{ id: string }[]>`
+  const rows = await appDataSource.query(
+    `
     SELECT id
     FROM farms
-    WHERE id = ${farmIdParam}::uuid
+    WHERE id = $1::uuid
     LIMIT 1
-  `;
+  `,
+    [farmIdParam]
+  );
 
   if (!rows[0]) {
     throw new NotFoundError('Farm not found');
@@ -305,25 +379,34 @@ export const updateFarmReadingsById = async (
     });
   }
 
-  await prisma.$transaction(async (tx) => {
+  await appDataSource.transaction(async (manager: EntityManager) => {
     const readings = input.readings.map((reading) => ({
       ...reading,
       farmId,
     }));
 
-    const values = readings.map((reading) => Prisma.sql`(
-      ${reading.farmId}::uuid,
-      ${reading.sensor_id},
-      ${reading.recorded_at}::timestamptz,
-      ${reading.metric},
-      ${reading.value},
-      ${reading.unit}
-    )`);
+    const values = readings
+      .map((_, index) => {
+        const offset = index * 6;
+        return `($${offset + 1}::uuid, $${offset + 2}, $${offset + 3}::timestamptz, $${offset + 4}, $${offset + 5}, $${offset + 6})`;
+      })
+      .join(', ');
+    const params = readings.flatMap((reading) => [
+      reading.farmId,
+      reading.sensor_id,
+      reading.recorded_at,
+      reading.metric,
+      reading.value,
+      reading.unit,
+    ]);
 
-    await tx.$executeRaw`
+    await manager.query(
+      `
       INSERT INTO farm_readings (farm_id, sensor_id, recorded_at, metric, value, unit)
-      VALUES ${Prisma.join(values)}
-    `;
+      VALUES ${values}
+    `,
+      params
+    );
   });
 
   return {
@@ -340,20 +423,30 @@ export const getFarmReadingsSummaryById = async (
     throw new ValidationError('farm_id must be a valid UUID');
   }
 
-  const rows = await prisma.$queryRaw<FarmMetricSummaryRow[]>`
-    WITH farm_match AS (
-      SELECT id
-      FROM farms
-      WHERE id = ${farmIdParam}::uuid
-    ),
-    readings_window AS (
+  const farmRows = await appDataSource.query(
+    `
+    SELECT id
+    FROM farms
+    WHERE id = $1::uuid
+    LIMIT 1
+  `,
+    [farmIdParam]
+  );
+
+  if (!farmRows[0]) {
+    throw new NotFoundError('Farm not found');
+  }
+
+  const rows = await appDataSource.query(
+    `
+    WITH readings_window AS (
       SELECT
         fr.metric,
         fr.value,
         fr.recorded_at
       FROM farm_readings fr
-      INNER JOIN farm_match fm ON fm.id = fr.farm_id
-      WHERE fr.recorded_at >= now() - interval '30 days'
+      WHERE fr.farm_id = $1::uuid
+        AND fr.recorded_at >= now() - interval '30 days'
     ),
     metric_stats AS (
       SELECT
@@ -377,7 +470,6 @@ export const getFarmReadingsSummaryById = async (
       WHERE row_number = 1
     )
     SELECT
-      EXISTS (SELECT 1 FROM farm_match) AS farm_exists,
       ms.metric,
       ms.min,
       ms.max,
@@ -386,47 +478,26 @@ export const getFarmReadingsSummaryById = async (
       ms.reading_count
     FROM metric_stats ms
     INNER JOIN latest_readings lr ON lr.metric = ms.metric
+  `,
+    [farmIdParam]
+  );
 
-    UNION ALL
+  const summary: FarmMetricSummary[] = [];
 
-    SELECT
-      true AS farm_exists,
-      NULL AS metric,
-      NULL AS min,
-      NULL AS max,
-      NULL AS mean,
-      NULL AS latest_value,
-      NULL AS reading_count
-    WHERE EXISTS (SELECT 1 FROM farm_match)
-      AND NOT EXISTS (SELECT 1 FROM metric_stats)
+  for (const row of rows) {
+    if (row.metric === null) {
+      continue;
+    }
 
-    UNION ALL
-
-    SELECT
-      false AS farm_exists,
-      NULL AS metric,
-      NULL AS min,
-      NULL AS max,
-      NULL AS mean,
-      NULL AS latest_value,
-      NULL AS reading_count
-    WHERE NOT EXISTS (SELECT 1 FROM farm_match)
-  `;
-
-  if (rows[0]?.farm_exists === false) {
-    throw new NotFoundError('Farm not found');
-  }
-
-  const summary: FarmMetricSummary[] = rows
-    .filter((row): row is FarmMetricSummaryRow & { metric: ReadingMetric } => row.metric !== null)
-    .map((row) => ({
+    summary.push({
       metric: row.metric,
       min: toNumber(row.min!),
       max: toNumber(row.max!),
       mean: toNumber(row.mean!),
       latest_value: toNumber(row.latest_value!),
       reading_count: Number(row.reading_count),
-    }));
+    });
+  }
 
   return {
     farm_id: farmIdParam,
@@ -437,19 +508,6 @@ export const getFarmReadingsSummaryById = async (
 
 
 
-
-
-export const deleteFarm = async (id: string): Promise<void> => {
-  const deleted = await prisma.$executeRaw`
-    DELETE FROM farms
-    WHERE id = ${id}::uuid
-  `;
-
-  if (deleted === 0) {
-    throw new NotFoundError('Farm not found');
-  }
-};
-
 export const farmService = {
   createFarm,
   getFarms,
@@ -457,5 +515,5 @@ export const farmService = {
   getFarmById,
   updateFarmReadingsById,
   getFarmReadingsSummaryById,
-  deleteFarm,
+ 
 };
